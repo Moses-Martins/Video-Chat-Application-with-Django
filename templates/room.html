@@ -1,111 +1,177 @@
 {% extends "base.html" %}
 
 {% block title %}
-  Chat room for "{{ room_name }}"
+Room – {{ room_name }}
 {% endblock %}
 
 {% block content %}
-  <div class="chat-container">
-    <div class="chat-header">
-      <h2>💬 {{ room_name }}</h2>
-      <p>Welcome, {{ username }}!</p>
-    </div>
-    <div id="chat" class="chat-messages"></div>
+<div class="chat-container">
 
-    <div id="chat-input" class="chat-input-container">
-      <input
-        id="chat-message-input"
-        type="text"
-        placeholder="Type your message..."
-        class="message-input"
-      >
-      <button id="chat-message-submit" class="send-button">
-        <i class="fas fa-location-arrow"></i>
-      </button>
-    </div>
+  <!-- HEADER -->
+  <div class="chat-header">
+    <h2>💬📹 {{ room_name }}</h2>
+    <p>You are {{ username }}</p>
   </div>
+
+  <!-- VIDEO -->
+  <div class="video-container">
+    <video id="localVideo" autoplay muted playsinline></video>
+    <video id="remoteVideo" autoplay playsinline></video>
+  </div>
+
+  <div class="call-controls">
+    <button id="startCall">Start Call</button>
+    <button id="endCall">End Call</button>
+  </div>
+
+  <!-- CHAT -->
+  <div id="chat" class="chat-messages"></div>
+
+  <div class="chat-input-container">
+    <input id="chat-message-input" type="text" placeholder="Type message..." />
+    <button id="chat-message-submit">Send</button>
+  </div>
+
+</div>
 {% endblock %}
 
 {% block include_js %}
-  {{ room_name|json_script:"room_name" }}
-  {{ username|json_script:"username" }}
+{{ room_name|json_script:"room_name" }}
+{{ username|json_script:"username" }}
 {% endblock %}
 
 {% block domready %}
-  // Get room name and username from HTML elements
-  const room_name = JSON.parse(
-    document.getElementById('room_name').textContent
-  );
-  const username = JSON.parse(
-    document.getElementById('username').textContent
-  );
 
-  // Create WebSocket connection URL and establish connection
+/* =======================
+   COMMON
+======================= */
+const room_name = JSON.parse(document.getElementById("room_name").textContent);
+const username = JSON.parse(document.getElementById("username").textContent);
+const protocol = window.location.protocol === "https:" ? "wss" : "ws";
 
-  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
-  const url = protocol + "://" + window.location.host + "/ws/room/" + room_name + "/" + username + "/";
-  const chatSocket = new WebSocket(url);
+/* =======================
+   CHAT SOCKET
+======================= */
+const chatSocket = new WebSocket(
+  `${protocol}://${window.location.host}/ws/room/${room_name}/${username}/`
+);
 
-  // Handle incoming messages
-  chatSocket.onmessage = function(event) {
-    // Parse the received JSON data
-    const data = JSON.parse(event.data);
-    const chat = document.getElementById('chat');
+chatSocket.onmessage = function(e) {
+  const data = JSON.parse(e.data);
+  const chat = document.getElementById("chat");
 
-    // Format the timestamp
-    const dateOptions = {hour: 'numeric', minute: 'numeric'};
-    const datetime = new Date(data.datetime).toLocaleString('en', dateOptions);
+  const isMe = data.user === username;
+  const source = isMe ? "me" : "other";
 
-    // Determine if the message is from the current user
-    const isMe = data.user === username;
-    const source = isMe ? 'message me' : 'message other';
-    const name = isMe ? 'Me' : data.user;
+  const messageDiv = document.createElement("div");
+  messageDiv.className = `message ${source} message-new`;
 
-    // Create and style the message element
-    const messageDiv = document.createElement('div');
-    messageDiv.className = `message ${source} message-new`;
-    messageDiv.innerHTML = '<strong>' + name + '</strong>' +
-                          '<span class="date">' + datetime + '</span><br>' + data.message;
-
-    // Add message to chat and scroll to bottom
-    chat.appendChild(messageDiv);
-    chat.scrollTop = chat.scrollHeight;
-
-    // Remove the 'new message' animation class after 300ms
-    setTimeout(() => {
-        messageDiv.classList.remove('message-new');
-    }, 300);
-  };
-
-  // Handle WebSocket connection closure
-  chatSocket.onclose = function(event) {
-    console.error('Chat socket closed unexpectedly');
-  };
-
-  // Get references to input field and submit button
-  const input = document.getElementById('chat-message-input');
-  const submitButton = document.getElementById('chat-message-submit');
-
-  // Handle submit button click
-  submitButton.addEventListener('click', function(event) {
-    const message = input.value.trim();
-    if(message) {
-      // Send message through WebSocket
-      chatSocket.send(JSON.stringify({'message': message}));
-      // Clear input and maintain focus
-      input.value = '';
-      input.focus();
-    }
+  const time = new Date().toLocaleTimeString([], {
+    hour: "2-digit",
+    minute: "2-digit"
   });
 
-  // Handle Enter key press in input field
-  input.addEventListener('keypress', function(event) {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      submitButton.click();
-    }
-  });
+  messageDiv.innerHTML = `
+    <strong>${isMe ? "Me" : data.user}</strong>
+    <span class="date">${time}</span>
+    ${data.message}
+  `;
 
-  // Set initial focus to input field
-  input.focus();
+  chat.appendChild(messageDiv);
+  chat.scrollTop = chat.scrollHeight;
+
+  setTimeout(() => {
+    messageDiv.classList.remove("message-new");
+  }, 300);
+};
+
+
+document.getElementById("chat-message-submit").onclick = () => {
+  const input = document.getElementById("chat-message-input");
+  if (input.value.trim()) {
+    chatSocket.send(JSON.stringify({ message: input.value }));
+    input.value = "";
+  }
+};
+
+/* =======================
+   CALL SOCKET
+======================= */
+const callSocket = new WebSocket(
+  `${protocol}://${window.location.host}/ws/call/${room_name}/${username}/`
+);
+
+let localStream;
+let peerConnection;
+
+const localVideo = document.getElementById("localVideo");
+const remoteVideo = document.getElementById("remoteVideo");
+
+const iceServers = {
+  iceServers: [{ urls: "stun:stun.l.google.com:19302" }]
+};
+
+navigator.mediaDevices.getUserMedia({ video: true, audio: true })
+.then(stream => {
+  localStream = stream;
+  localVideo.srcObject = stream;
+});
+
+callSocket.onmessage = async (e) => {
+  const data = JSON.parse(e.data);
+  if (data.user === username) return;
+
+  if (data.type === "offer") await createAnswer(data.data);
+  if (data.type === "answer") await peerConnection.setRemoteDescription(data.data);
+  if (data.type === "ice-candidate") await peerConnection.addIceCandidate(data.data);
+};
+
+async function createPeerConnection() {
+  peerConnection = new RTCPeerConnection(iceServers);
+
+  localStream.getTracks().forEach(track =>
+    peerConnection.addTrack(track, localStream)
+  );
+
+  peerConnection.ontrack = e => {
+    remoteVideo.srcObject = e.streams[0];
+  };
+
+  peerConnection.onicecandidate = e => {
+    if (e.candidate) {
+      callSocket.send(JSON.stringify({
+        type: "ice-candidate",
+        data: e.candidate
+      }));
+    }
+  };
+}
+
+async function startCall() {
+  await createPeerConnection();
+  const offer = await peerConnection.createOffer();
+  await peerConnection.setLocalDescription(offer);
+
+  callSocket.send(JSON.stringify({
+    type: "offer",
+    data: offer
+  }));
+}
+
+async function createAnswer(offer) {
+  await createPeerConnection();
+  await peerConnection.setRemoteDescription(offer);
+
+  const answer = await peerConnection.createAnswer();
+  await peerConnection.setLocalDescription(answer);
+
+  callSocket.send(JSON.stringify({
+    type: "answer",
+    data: answer
+  }));
+}
+
+document.getElementById("startCall").onclick = startCall;
+document.getElementById("endCall").onclick = () => peerConnection?.close();
+
 {% endblock %}

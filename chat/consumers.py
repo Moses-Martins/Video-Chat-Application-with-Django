@@ -6,7 +6,7 @@ from django.utils import timezone
 class ChatConsumer(AsyncWebsocketConsumer):
     async def connect(self):
         self.user = self.scope["url_route"]["kwargs"]["username"]
-        self.room_name = self.scope["url_route"]["kwargs"]["room_name"]
+        self.room_name = f"chat_{self.scope['url_route']['kwargs']['room_name']}"
 
         await self.channel_layer.group_add(
             self.room_name, self.channel_name

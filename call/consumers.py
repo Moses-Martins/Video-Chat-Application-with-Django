@@ -10,7 +10,7 @@ class CallConsumer(AsyncWebsocketConsumer):
 
     async def connect(self):
         self.user = self.scope["url_route"]["kwargs"]["username"]
-        self.room_name = self.scope["url_route"]["kwargs"]["room_name"]
+        self.room_name = f"call_{self.scope['url_route']['kwargs']['room_name']}"
 
         # Join the room
         await self.channel_layer.group_add(
